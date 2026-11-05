@@ -1,0 +1,57 @@
+name: Publish desktop updates
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-update-publish
+  cancel-in-progress: false
+
+jobs:
+  package-and-publish:
+    runs-on: windows-latest
+    env:
+      VITE_SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+      VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Validate release configuration
+        shell: bash
+        run: |
+          test -n "$VITE_SUPABASE_URL" || { echo "Set the SUPABASE_URL repository variable."; exit 1; }
+          test -n "$VITE_SUPABASE_ANON_KEY" || { echo "Set the VITE_SUPABASE_ANON_KEY repository variable."; exit 1; }
+          test -n "$UPDATE_REPOSITORY_TOKEN" || { echo "Set the UPDATE_REPOSITORY_TOKEN repository secret."; exit 1; }
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          test "$GITHUB_REF_NAME" = "v$PACKAGE_VERSION" || {
+            echo "Release tag $GITHUB_REF_NAME must match package version v$PACKAGE_VERSION."
+            exit 1
+          }
+        env:
+          UPDATE_REPOSITORY_TOKEN: ${{ secrets.UPDATE_REPOSITORY_TOKEN }}
+      - run: npm ci
+      - run: npm run build
+      - name: Package application
+        shell: bash
+        run: npx electron-builder --config electron-builder.config.cjs --publish never --win nsis --x64
+      - name: Publish public update release
+        uses: softprops/action-gh-release@v2
+        with:
+          repository: daqdaq933-arch/lain-leaks-updates
+          token: ${{ secrets.UPDATE_REPOSITORY_TOKEN }}
+          tag_name: ${{ github.ref_name }}
+          target_commitish: main
+          name: Lain Leaks ${{ github.ref_name }}
+          files: |
+            release/*.exe
+            release/*.blockmap
+            release/latest.yml
+          fail_on_unmatched_files: true
